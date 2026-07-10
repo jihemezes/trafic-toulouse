@@ -1,0 +1,21 @@
+// ============================================================
+// Trafic Toulouse — configuration
+// Fichier GÉNÉRÉ au démarrage du conteneur depuis les variables
+// d'environnement (voir docker-compose.yml). Ne pas éditer ici.
+// ============================================================
+window.APP_CONFIG = {
+  TOMTOM_API_KEY: "${TOMTOM_API_KEY}",
+
+  MAP_LAT: ${MAP_LAT},
+  MAP_LON: ${MAP_LON},
+  MAP_ZOOM: ${MAP_ZOOM},
+
+  REFRESH_INTERVAL_S: ${REFRESH_INTERVAL_S},
+
+  TRAFFIC_STYLE: "${TRAFFIC_STYLE}",
+  FLOW_THICKNESS: ${FLOW_THICKNESS},
+  SHOW_INCIDENTS: ${SHOW_INCIDENTS},
+  SHOW_JAMS: ${SHOW_JAMS},
+
+  CITY_LABEL: "${CITY_LABEL}"
+};

@@ -1,0 +1,27 @@
+# ============================================================
+# Test standalone (Mac, Synology, ou n'importe quel hôte Docker)
+#   1. cp .env.example .env  puis renseigner TOMTOM_API_KEY
+#   2. docker compose up -d --build
+#   3. http://localhost:8480
+# ============================================================
+services:
+  web:
+    build: .
+    image: trafic-toulouse:local
+    container_name: trafic-toulouse
+    restart: unless-stopped
+    ports:
+      - "8480:80"
+    volumes:
+      - ./data:/data
+    environment:
+      TOMTOM_API_KEY: ${TOMTOM_API_KEY:-}
+      MAP_LAT: ${MAP_LAT:-43.6045}
+      MAP_LON: ${MAP_LON:-1.4442}
+      MAP_ZOOM: ${MAP_ZOOM:-12}
+      REFRESH_INTERVAL_S: ${REFRESH_INTERVAL_S:-60}
+      TRAFFIC_STYLE: ${TRAFFIC_STYLE:-relative0}
+      FLOW_THICKNESS: ${FLOW_THICKNESS:-7}
+      SHOW_INCIDENTS: ${SHOW_INCIDENTS:-false}
+      SHOW_JAMS: ${SHOW_JAMS:-true}
+      CITY_LABEL: ${CITY_LABEL:-Toulouse}

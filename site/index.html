@@ -1,0 +1,430 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>City Road Traffic — Toulouse</title>
+<link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><circle cx='50' cy='50' r='45' fill='%23e2493b'/></svg>">
+<link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css"
+      integrity="sha256-p4NxAoJBhIIN+hmNHrzRCf9tD/miZyoHS5obTRR9BMY=" crossorigin="">
+<style>
+  :root{
+    --panel-bg: rgba(20, 22, 27, 0.90);
+    --panel-border: rgba(255,255,255,0.10);
+    --text: #eef0f3;
+    --text-dim: #9aa1ab;
+    --accent: #e2493b;          /* brique toulousaine */
+    --flow-free: #34c26b;
+    --flow-slow: #f5a623;
+    --flow-jam:  #e2493b;
+    --flow-stop: #8b1e14;
+    --radius: 12px;
+    --font: "Segoe UI", system-ui, -apple-system, Roboto, sans-serif;
+  }
+  html, body { margin:0; padding:0; height:100%; font-family:var(--font); }
+  #map { position:absolute; inset:0; background:#1a1c20; }
+
+  /* L'attribut hidden doit toujours l'emporter */
+  [hidden]{ display:none !important; }
+
+  /* ---------- Panneau d'état ---------- */
+  .hud{
+    position:absolute; top:14px; left:14px; z-index:1000;
+    background:var(--panel-bg); color:var(--text);
+    border:1px solid var(--panel-border); border-radius:var(--radius);
+    padding:12px 16px; min-width:230px;
+    backdrop-filter: blur(8px); -webkit-backdrop-filter: blur(8px);
+    box-shadow: 0 6px 24px rgba(0,0,0,0.35);
+    user-select:none;
+  }
+  .hud-toggle{
+    all:unset; box-sizing:border-box;
+    display:flex; align-items:center; justify-content:space-between; gap:10px;
+    width:100%; cursor:pointer;
+  }
+  .hud-toggle:focus-visible{ outline:2px solid var(--accent); outline-offset:3px; border-radius:6px; }
+  .hud h1{
+    margin:0; font-size:14px; font-weight:600; letter-spacing:0.01em;
+    display:flex; align-items:center; gap:8px; white-space:nowrap;
+  }
+  .hud h1 .dot{
+    width:9px; height:9px; border-radius:50%; background:var(--flow-free);
+    box-shadow:0 0 6px var(--flow-free); flex:none;
+    transition: background .3s, box-shadow .3s;
+  }
+  .hud h1 .dot.stale{ background:var(--flow-slow); box-shadow:0 0 6px var(--flow-slow); }
+  .hud h1 .dot.error{ background:var(--flow-jam);  box-shadow:0 0 6px var(--flow-jam); }
+  .hud .chevron{
+    flex:none; width:16px; height:16px; color:var(--text-dim);
+    transition: transform .2s ease;
+  }
+  .hud-toggle[aria-expanded="true"] .chevron{ transform:rotate(180deg); }
+  .hud-body{
+    margin-top:10px; padding-top:10px;
+    border-top:1px solid var(--panel-border);
+  }
+  .hud-body[hidden]{ display:none; }
+  .hud .sub{ font-size:12px; color:var(--text-dim); margin-bottom:10px; }
+  .hud .sub strong{ color:var(--text); font-weight:600; }
+  .hud .row{ display:flex; justify-content:space-between; gap:16px; font-size:12.5px; padding:2px 0; }
+  .hud .row .label{ color:var(--text-dim); }
+  .hud .row .value{ font-variant-numeric: tabular-nums; }
+
+  .legend{ display:flex; gap:4px; margin-top:10px; }
+  .legend span{ flex:1; height:5px; border-radius:3px; }
+  .legend .l1{ background:var(--flow-free); }
+  .legend .l2{ background:var(--flow-slow); }
+  .legend .l3{ background:var(--flow-jam);  }
+  .legend .l4{ background:var(--flow-stop); }
+  .legend-labels{ display:flex; justify-content:space-between; font-size:10.5px; color:var(--text-dim); margin-top:3px; }
+
+  .hud .actions{ display:flex; gap:8px; margin-top:12px; }
+  .btn{
+    flex:1; padding:7px 0;
+    background:transparent; color:var(--text);
+    border:1px solid var(--panel-border); border-radius:8px;
+    font-family:var(--font); font-size:12.5px; cursor:pointer;
+    transition: background .15s, border-color .15s;
+  }
+  .btn:hover{ background:rgba(255,255,255,0.07); }
+  .btn:focus-visible{ outline:2px solid var(--accent); outline-offset:2px; }
+  .btn.active{ border-color:var(--accent); }
+
+  /* ---------- Panneau des paramètres ---------- */
+  .settings{
+    position:absolute; top:14px; right:14px; z-index:1100;
+    width:290px; max-height:calc(100% - 28px); overflow-y:auto;
+    background:var(--panel-bg); color:var(--text);
+    border:1px solid var(--panel-border); border-radius:var(--radius);
+    padding:14px 16px 16px;
+    backdrop-filter: blur(8px); -webkit-backdrop-filter: blur(8px);
+    box-shadow: 0 6px 24px rgba(0,0,0,0.35);
+    font-size:12.5px;
+  }
+  .settings h2{
+    margin:0 0 4px; font-size:14px; font-weight:600;
+    display:flex; align-items:center; justify-content:space-between;
+  }
+  .settings h2 .close{
+    background:none; border:none; color:var(--text-dim); font-size:18px;
+    cursor:pointer; padding:0 2px; line-height:1;
+  }
+  .settings h2 .close:hover{ color:var(--text); }
+  .settings .hint{ color:var(--text-dim); font-size:11.5px; margin:0 0 12px; }
+
+  .settings fieldset{
+    border:none; margin:0 0 4px; padding:10px 0 6px;
+    border-top:1px solid var(--panel-border);
+  }
+  .settings legend{
+    padding:0 0 6px; font-size:11px; font-weight:600;
+    text-transform:uppercase; letter-spacing:0.06em; color:var(--text-dim);
+  }
+  .field{ margin-bottom:10px; }
+  .field label{ display:block; margin-bottom:4px; color:var(--text); }
+  .field .val{ color:var(--text-dim); font-variant-numeric:tabular-nums; }
+
+  .settings select{
+    width:100%; padding:6px 8px;
+    background:#14161b; color:var(--text);
+    border:1px solid var(--panel-border); border-radius:7px;
+    font-family:var(--font); font-size:12.5px;
+  }
+  .settings select:focus-visible{ outline:2px solid var(--accent); outline-offset:1px; }
+  .settings select:disabled, .settings input:disabled{ opacity:0.45; }
+
+  .settings input[type="range"]{
+    width:100%; accent-color:var(--accent); cursor:pointer;
+  }
+
+  .cityrow{ display:flex; gap:6px; }
+  .cityrow input[type="text"]{
+    flex:1; min-width:0; padding:6px 8px;
+    background:#14161b; color:var(--text);
+    border:1px solid var(--panel-border); border-radius:7px;
+    font-family:var(--font); font-size:12.5px;
+  }
+  .cityrow input[type="text"]:focus-visible{ outline:2px solid var(--accent); outline-offset:1px; }
+  .cityrow .citygo{ flex:none; width:44px; }
+
+  .city-results{
+    list-style:none; margin:6px 0 0; padding:0;
+    border:1px solid var(--panel-border); border-radius:7px; overflow:hidden;
+  }
+  .city-results li{
+    padding:7px 10px; cursor:pointer; font-size:12px;
+    border-bottom:1px solid var(--panel-border);
+  }
+  .city-results li:last-child{ border-bottom:none; }
+  .city-results li:hover, .city-results li:focus-visible{ background:rgba(255,255,255,0.07); outline:none; }
+  .city-results li.empty{ color:var(--text-dim); cursor:default; }
+  .city-results li.empty:hover{ background:none; }
+
+  .switch{ display:flex; align-items:center; justify-content:space-between; gap:12px; }
+  .switch input{ accent-color:var(--accent); width:16px; height:16px; cursor:pointer; }
+
+  .settings .reset{
+    width:100%; margin-top:10px; padding:7px 0;
+    background:transparent; color:var(--text-dim);
+    border:1px solid var(--panel-border); border-radius:8px;
+    font-family:var(--font); font-size:12px; cursor:pointer;
+  }
+  .settings .reset:hover{ color:var(--text); background:rgba(255,255,255,0.07); }
+
+  /* ---------- Popups incidents ---------- */
+  .leaflet-popup-content-wrapper, .leaflet-popup-tip{
+    background:var(--panel-bg); color:var(--text);
+    backdrop-filter: blur(8px);
+  }
+  .leaflet-popup-content{ margin:12px 16px; font-family:var(--font); font-size:12.5px; line-height:1.5; }
+  .incident-popup h3{ margin:0 0 6px; font-size:13px; display:flex; align-items:center; gap:7px; }
+  .incident-popup h3 .cat{
+    width:8px; height:8px; border-radius:50%; background:var(--flow-slow); flex:none;
+  }
+  .incident-popup h3 .cat.c8{ background:var(--flow-stop); }   /* route fermée */
+  .incident-popup h3 .cat.c1{ background:var(--flow-jam); }    /* accident */
+  .incident-popup .desc{ margin:0 0 6px; }
+  .incident-popup .meta{ color:var(--text-dim); font-size:11.5px; margin:0; }
+  .incident-popup .meta b{ color:var(--text); font-weight:600; }
+  .leaflet-container a.leaflet-popup-close-button{ color:var(--text-dim); }
+
+  .leaflet-tooltip.incident-tip{
+    background:var(--panel-bg); color:var(--text);
+    border:1px solid var(--panel-border); border-radius:7px;
+    font-family:var(--font); font-size:12px; padding:4px 9px;
+    box-shadow:0 4px 14px rgba(0,0,0,0.3);
+  }
+  .leaflet-tooltip.incident-tip::before{ display:none; }
+
+  /* ---------- Message de configuration manquante ---------- */
+  .setup{
+    position:absolute; inset:0; z-index:2000;
+    display:flex; align-items:center; justify-content:center;
+    background:#14161b; color:var(--text); padding:24px;
+  }
+  .setup .card{
+    max-width:520px; background:rgba(255,255,255,0.04);
+    border:1px solid var(--panel-border); border-radius:var(--radius);
+    padding:28px 32px; line-height:1.55; font-size:14.5px;
+  }
+  .setup h1{ font-size:18px; margin:0 0 12px; }
+  .setup code{ background:rgba(255,255,255,0.08); padding:2px 6px; border-radius:5px; font-size:13px; }
+  .setup a{ color:#6ab7ff; }
+  .setup ol{ padding-left:20px; margin:10px 0 0; }
+  .setup li{ margin-bottom:6px; }
+  .keyrow{ display:flex; gap:8px; margin-top:16px; }
+  .keyrow input{
+    flex:1; min-width:0; padding:9px 12px;
+    background:#14161b; color:var(--text);
+    border:1px solid var(--panel-border); border-radius:8px;
+    font-family:ui-monospace, Menlo, monospace; font-size:13px;
+  }
+  .keyrow input:focus-visible{ outline:2px solid var(--accent); outline-offset:1px; }
+  .keyrow button{
+    flex:none; padding:9px 16px;
+    background:var(--accent); color:#fff; border:none; border-radius:8px;
+    font-family:var(--font); font-size:13px; font-weight:600; cursor:pointer;
+  }
+  .keyrow button:hover{ filter:brightness(1.1); }
+  .keymsg{ min-height:1.2em; font-size:13px; color:var(--text-dim); margin:10px 0 0; }
+  .keycancel{
+    margin-top:12px; padding:7px 14px;
+    background:transparent; color:var(--text-dim);
+    border:1px solid var(--panel-border); border-radius:8px;
+    font-family:var(--font); font-size:12.5px; cursor:pointer;
+  }
+  .keycancel:hover{ color:var(--text); }
+
+  .setuplang{ display:flex; justify-content:flex-end; margin-bottom:10px; }
+  .setuplang select{
+    padding:5px 8px; background:#14161b; color:var(--text-dim);
+    border:1px solid var(--panel-border); border-radius:7px;
+    font-family:var(--font); font-size:12px; cursor:pointer;
+  }
+  .setuplang select:focus-visible{ outline:2px solid var(--accent); outline-offset:1px; }
+
+  @media (max-width:600px){
+    .hud{ left:10px; right:auto; top:10px; min-width:0; }
+    .settings{ left:10px; right:10px; top:auto; bottom:10px; width:auto; max-height:60%; }
+  }
+  @media (prefers-reduced-motion: reduce){
+    *{ transition:none !important; }
+  }
+</style>
+</head>
+<body>
+
+<div id="map" role="application" data-i18n-aria-label="mapAriaLabel" aria-label="Carte du trafic routier"></div>
+
+<aside class="hud" id="hud" hidden>
+  <button class="hud-toggle" id="hudToggle" type="button" aria-expanded="true" aria-controls="hudBody" data-i18n-aria-label="hudToggleLabel" aria-label="Réduire le panneau">
+    <h1><span class="dot" id="statusDot"></span>City Road Traffic</h1>
+    <svg class="chevron" viewBox="0 0 20 20" fill="none" aria-hidden="true"><path d="M5 7.5L10 12.5L15 7.5" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>
+  </button>
+  <div class="hud-body" id="hudBody">
+    <div class="sub"><strong id="cityLabel">Toulouse</strong> · Flux routier temps réel</div>
+    <div class="row"><span class="label" data-i18n="lastUpdate">Dernière mise à jour</span><span class="value" id="lastUpdate">—</span></div>
+    <div class="row"><span class="label" data-i18n="nextIn">Prochaine dans</span><span class="value" id="countdown">—</span></div>
+    <div class="legend" aria-hidden="true"><span class="l1"></span><span class="l2"></span><span class="l3"></span><span class="l4"></span></div>
+    <div class="legend-labels" aria-hidden="true"><span data-i18n="legendFree">Fluide</span><span data-i18n="legendJam">Bloqué</span></div>
+    <div class="actions">
+      <button id="pauseBtn" class="btn" type="button" data-i18n="pause">Pause</button>
+      <button id="settingsBtn" class="btn" type="button" aria-expanded="false" aria-controls="settings" data-i18n="settingsBtn">Paramètres</button>
+    </div>
+  </div>
+</aside>
+
+<aside class="settings" id="settings" hidden data-i18n-aria-label="settingsAriaLabel" aria-label="Paramètres d'affichage">
+  <h2><span data-i18n="settingsTitle">Paramètres</span> <button class="close" id="settingsClose" type="button" data-i18n-aria-label="close" aria-label="Fermer">×</button></h2>
+  <p class="hint" data-i18n="settingsHint">Réglages enregistrés dans ce navigateur. Appliqués immédiatement.</p>
+
+  <fieldset>
+    <legend data-i18n="langLegend">Langue</legend>
+    <div class="field">
+      <select id="setLang">
+        <option value="fr">Français</option>
+        <option value="en">English</option>
+      </select>
+    </div>
+  </fieldset>
+
+  <fieldset>
+    <legend data-i18n="cityLegend">Ville</legend>
+    <div class="field">
+      <label for="setCityQuery"><span data-i18n="cityShown">Affichée :</span> <span class="val" id="currentCity">—</span></label>
+      <div class="cityrow">
+        <input type="text" id="setCityQuery" data-i18n-placeholder="cityPlaceholder" placeholder="Nom de ville ou code postal…" autocomplete="off">
+        <button class="btn citygo" id="citySearchBtn" type="button">OK</button>
+      </div>
+      <ul id="cityResults" class="city-results" hidden></ul>
+      <button class="reset" id="cityReset" type="button" hidden>Revenir à la ville par défaut</button>
+    </div>
+  </fieldset>
+
+  <fieldset>
+    <legend data-i18n="mapLegend">Carte</legend>
+    <div class="field">
+      <label for="setBasemap" data-i18n="basemapLabel">Fond de carte</label>
+      <select id="setBasemap">
+        <option value="auto" data-i18n="basemapAuto">Auto jour / nuit (soleil)</option>
+        <option value="dark" data-i18n="basemapDark">Sombre</option>
+        <option value="light" data-i18n="basemapLight">Clair</option>
+        <option value="voyager" data-i18n="basemapVoyager">Voyager (routier)</option>
+      </select>
+    </div>
+    <div class="field" id="dayStyleField">
+      <label for="setDayStyle" data-i18n="dayStyleLabel">Fond utilisé le jour (mode auto)</label>
+      <select id="setDayStyle">
+        <option value="light" data-i18n="basemapLight">Clair</option>
+        <option value="voyager" data-i18n="basemapVoyager">Voyager (routier)</option>
+      </select>
+    </div>
+  </fieldset>
+
+  <fieldset>
+    <legend data-i18n="flowLegend">Flux trafic</legend>
+    <div class="field">
+      <label for="setFlowStyle" data-i18n="flowStyleLabel">Style de coloration</label>
+      <select id="setFlowStyle">
+        <option value="relative0" data-i18n="flowRelative">Relatif — écart à la vitesse normale</option>
+        <option value="relative0-dark" data-i18n="flowRelativeDark">Relatif sombre — pour fond sombre</option>
+        <option value="absolute" data-i18n="flowAbsolute">Absolu — vitesse réelle</option>
+        <option value="relative-delay" data-i18n="flowDelay">Retard seul — masque le fluide</option>
+        <option value="reduced-sensitivity" data-i18n="flowReduced">Sensibilité réduite — gros bouchons seulement</option>
+      </select>
+    </div>
+    <div class="field">
+      <label for="setThickness"><span data-i18n="thicknessLabel">Épaisseur des tronçons</span> <span class="val" id="thicknessVal"></span></label>
+      <input type="range" id="setThickness" min="1" max="20" step="1">
+    </div>
+    <div class="field">
+      <label for="setFlowOpacity"><span data-i18n="opacityLabel">Opacité</span> <span class="val" id="flowOpacityVal"></span></label>
+      <input type="range" id="setFlowOpacity" min="20" max="100" step="5">
+    </div>
+  </fieldset>
+
+  <fieldset>
+    <legend data-i18n="jamsLegend">Bouchons et incidents</legend>
+    <div class="field switch">
+      <label for="setShowJams" style="margin:0" data-i18n-html="jamsLabel">Bouchons toujours affichés<br><span style="color:var(--text-dim);font-size:11px">tracés cliquables avec retard estimé</span></label>
+      <input type="checkbox" id="setShowJams">
+    </div>
+    <div class="field switch">
+      <label for="setIncidents" style="margin:0" data-i18n-html="incidentsLabel">Autres incidents<br><span style="color:var(--text-dim);font-size:11px">travaux, fermetures, accidents…</span></label>
+      <input type="checkbox" id="setIncidents">
+    </div>
+    <div class="field switch">
+      <label for="setIncidentDetails" style="margin:0" data-i18n="incidentDetailsLabel">Infos au survol / clic</label>
+      <input type="checkbox" id="setIncidentDetails">
+    </div>
+    <div class="field">
+      <label for="setIncidentStyle" data-i18n="incidentStyleLabel">Style des icônes</label>
+      <select id="setIncidentStyle">
+        <option value="s0" data-i18n="incStyleS0">s0 — lignes seules, sans icônes</option>
+        <option value="s1" data-i18n="incStyleS1">s1 — icônes discrètes</option>
+        <option value="s2" data-i18n="incStyleS2">s2 — icônes moyennes</option>
+        <option value="s3" data-i18n="incStyleS3">s3 — icônes détaillées (chevrons)</option>
+        <option value="night" data-i18n="incStyleNight">night — adapté au fond sombre</option>
+      </select>
+    </div>
+    <div class="field">
+      <label for="setIncidentOpacity"><span data-i18n="opacityLabel">Opacité</span> <span class="val" id="incidentOpacityVal"></span></label>
+      <input type="range" id="setIncidentOpacity" min="20" max="100" step="5">
+    </div>
+  </fieldset>
+
+  <fieldset>
+    <legend data-i18n="refreshLegend">Rafraîchissement</legend>
+    <div class="field">
+      <label for="setRefresh" data-i18n="refreshLabel">Intervalle</label>
+      <select id="setRefresh">
+        <option value="30" data-i18n="refresh30">30 secondes</option>
+        <option value="60" data-i18n="refresh60">60 secondes (recommandé)</option>
+        <option value="120" data-i18n="refresh120">2 minutes</option>
+        <option value="300" data-i18n="refresh300">5 minutes</option>
+      </select>
+    </div>
+  </fieldset>
+
+  <fieldset>
+    <legend data-i18n="apiKeyLegend">Clé API TomTom</legend>
+    <div class="field">
+      <label><span data-i18n="keySourceLabel">Source :</span> <span class="val" id="keySource">—</span></label>
+      <button class="reset" id="keyChangeBtn" type="button" data-i18n="keyChangeBtn">Modifier la clé…</button>
+      <button class="reset" id="keyClearBtn" type="button" hidden data-i18n="keyClearBtn">Revenir à la clé du serveur</button>
+    </div>
+  </fieldset>
+
+  <button class="reset" id="settingsReset" type="button" data-i18n="settingsReset">Réinitialiser les valeurs par défaut</button>
+</aside>
+
+<div class="setup" id="setup" hidden>
+  <div class="card">
+    <div class="setuplang">
+      <select id="setupLang" aria-label="Langue / Language">
+        <option value="fr">Français</option>
+        <option value="en">English</option>
+      </select>
+    </div>
+    <h1 data-i18n="setupTitle">Clé API TomTom requise</h1>
+    <p data-i18n="setupIntro">La carte du trafic utilise les tuiles TomTom Traffic. Une clé gratuite suffit largement pour un usage personnel.</p>
+    <ol>
+      <li data-i18n-html="setupStep1">Créer un compte sur <a href="https://developer.tomtom.com" target="_blank" rel="noopener">developer.tomtom.com</a></li>
+      <li data-i18n-html="setupStep2">Copier la clé depuis <em>My Dashboard</em></li>
+      <li data-i18n="setupStep3">La coller ci-dessous — elle sera enregistrée dans ce navigateur</li>
+    </ol>
+    <div class="keyrow">
+      <input type="text" id="apiKeyInput" data-i18n-placeholder="setupPlaceholder" placeholder="Coller la clé API ici" autocomplete="off" spellcheck="false">
+      <button id="apiKeySave" type="button" data-i18n="setupSave">Enregistrer</button>
+    </div>
+    <p class="keymsg" id="apiKeyMsg"></p>
+    <button class="keycancel" id="apiKeyCancel" type="button" hidden data-i18n="setupCancel">Annuler</button>
+  </div>
+</div>
+
+<script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"
+        integrity="sha256-20nQCchB9co0qIjJZRGuk2/Z9VM+kNiyxNV1lvTlZBo=" crossorigin=""></script>
+<script src="config.js"></script>
+<script src="app.js"></script>
+</body>
+</html>
